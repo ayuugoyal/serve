@@ -2,6 +2,7 @@ import time
 import random
 import logging
 from typing import Dict, Any, Optional
+from datetime import datetime, timezone
 from .base_sensor import BaseSensor
 
 logger = logging.getLogger(__name__)
