@@ -13,15 +13,18 @@ class SensorManager:
             'light_sensor': LDRSensor(),
             'motion_sensor': PIRSensor()
         }
-        logger.info(f"Initialized {len(self.sensors)} sensors")
+        active_sensors = sum(1 for sensor in self.sensors.values() if sensor.is_active)
+        total_sensors = len(self.sensors)
+        logger.info(f"Initialized {total_sensors} sensors. Active: {active_sensors}")
     
     def update_all_sensors(self):
         """Update all sensor readings"""
         for sensor_type, sensor in self.sensors.items():
-            try:
-                sensor.update_reading()
-            except Exception as e:
-                logger.error(f"Error updating {sensor_type}: {e}")
+            if sensor.is_active:
+                try:
+                    sensor.update_reading()
+                except Exception as e:
+                    logger.error(f"Error updating {sensor_type}: {e}")
     
     def get_all_readings(self) -> List[Dict[str, Any]]:
         """Get readings from all sensors"""
@@ -29,6 +32,8 @@ class SensorManager:
         for sensor_type, sensor in self.sensors.items():
             try:
                 reading = sensor.get_reading()
+                if not sensor.is_active:
+                    reading['status'] = 'not active'
                 readings.append(reading)
             except Exception as e:
                 logger.error(f"Error getting reading from {sensor_type}: {e}")
@@ -44,8 +49,12 @@ class SensorManager:
         if sensor_type not in self.sensors:
             return None
         
+        sensor = self.sensors[sensor_type]
         try:
-            return self.sensors[sensor_type].get_reading()
+            reading = sensor.get_reading()
+            if not sensor.is_active:
+                reading['status'] = 'not active'
+            return reading
         except Exception as e:
             logger.error(f"Error getting {sensor_type} reading: {e}")
             return None
@@ -71,15 +80,16 @@ class SensorManager:
             'total_sensors': total_sensors,
             'active_sensors': active_sensors,
             'healthy_sensors': healthy_sensors,
-            'system_health': 'healthy' if healthy_sensors == total_sensors else 'degraded'
+            'system_health': 'healthy' if healthy_sensors == active_sensors else 'degraded'
         }
     
     def cleanup(self):
         """Cleanup resources"""
         try:
-            if not SIMULATION_MODE:
-                import RPi.GPIO as GPIO
-                GPIO.cleanup()
-                logger.info("GPIO cleaned up")
+            import RPi.GPIO as GPIO
+            GPIO.cleanup()
+            logger.info("GPIO cleaned up")
+        except (ImportError, RuntimeError):
+            pass  # GPIO module not available or already cleaned up
         except Exception as e:
             logger.error(f"Cleanup error: {e}")
