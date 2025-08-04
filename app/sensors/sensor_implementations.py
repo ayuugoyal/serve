@@ -33,49 +33,13 @@ class UltrasonicSensor(BaseSensor):
         try:
             GPIO.setup(self.trigger_pin, GPIO.OUT)
             GPIO.setup(self.echo_pin, GPIO.IN)
-            # Test the sensor by doing a quick reading
-            if self._test_sensor_connection():
-                self.is_active = True
-                logger.info("Ultrasonic sensor connected and active")
-            else:
-                self.is_active = False
-                logger.warning("Ultrasonic sensor not responding - possibly disconnected")
+            GPIO.output(self.trigger_pin, False)
+            time.sleep(0.1)  # Let sensor settle
+            self.is_active = True
+            logger.info("Ultrasonic sensor pins configured")
         except Exception as e:
             self.is_active = False
             logger.error(f"Error setting up ultrasonic sensor: {e}")
-    
-    def _test_sensor_connection(self) -> bool:
-        """Test if the sensor is actually connected and responding"""
-        try:
-            GPIO.output(self.trigger_pin, True)
-            time.sleep(0.00001)
-            GPIO.output(self.trigger_pin, False)
-            
-            timeout_start = time.time()
-            pulse_start = time.time()
-            
-            # Wait for echo to go HIGH
-            while GPIO.input(self.echo_pin) == 0:
-                pulse_start = time.time()
-                if time.time() - timeout_start > 0.1:  # 100ms timeout for connection test
-                    return False
-            
-            # Wait for echo to go LOW
-            pulse_end = time.time()
-            while GPIO.input(self.echo_pin) == 1:
-                pulse_end = time.time()
-                if time.time() - timeout_start > 0.1:  # 100ms timeout for connection test
-                    return False
-            
-            pulse_duration = pulse_end - pulse_start
-            distance = (pulse_duration * 34300) / 2
-            
-            # If we get a reasonable distance reading, sensor is connected
-            return 0.5 <= distance <= 500  # Reasonable range for HC-SR04
-            
-        except Exception as e:
-            logger.error(f"Sensor connection test failed: {e}")
-            return False
     
     def get_sensor_type(self) -> str:
         return "ultrasonic"
@@ -85,42 +49,48 @@ class UltrasonicSensor(BaseSensor):
             return None
         
         try:
+            # Ensure trigger is LOW
+            GPIO.output(self.trigger_pin, False)
+            time.sleep(0.000002)  # 2μs
+            
+            # Send 10μs pulse
             GPIO.output(self.trigger_pin, True)
-            time.sleep(0.00001)
+            time.sleep(0.00001)  # 10μs
             GPIO.output(self.trigger_pin, False)
             
-            pulse_start = time.time()
+            # Wait for echo start with timeout
             timeout_start = time.time()
-            
             while GPIO.input(self.echo_pin) == 0:
                 pulse_start = time.time()
-                if time.time() - timeout_start > 1:  # 1 second timeout
-                    self.is_active = False  # Mark as inactive if timeout
+                if time.time() - timeout_start > 0.5:  # 500ms timeout
+                    logger.debug("Ultrasonic timeout waiting for echo start")
                     return None
             
-            pulse_end = time.time()
+            # Wait for echo end with timeout
             while GPIO.input(self.echo_pin) == 1:
                 pulse_end = time.time()
-                if time.time() - timeout_start > 1:  # 1 second timeout
-                    self.is_active = False  # Mark as inactive if timeout
+                if time.time() - timeout_start > 0.5:  # 500ms timeout
+                    logger.debug("Ultrasonic timeout waiting for echo end")
                     return None
             
+            # Calculate distance
             pulse_duration = pulse_end - pulse_start
             distance = (pulse_duration * 34300) / 2
             
-            if 2 <= distance <= 400:
+            # Validate distance reading
+            if 2 <= distance <= 400:  # HC-SR04 valid range
                 return {
                     'distance_cm': round(distance, 2),
                     'distance_inches': round(distance / 2.54, 2),
+                    'pulse_duration_us': round(pulse_duration * 1000000, 2),
                     'pins': {'trigger': self.trigger_pin, 'echo': self.echo_pin}
                 }
             else:
-                # Invalid reading might indicate disconnection
+                logger.debug(f"Ultrasonic invalid distance: {distance}cm")
                 return None
             
         except Exception as e:
             logger.error(f"Ultrasonic sensor error: {e}")
-            self.is_active = False
             return None
 
 class MQ135Sensor(BaseSensor):
@@ -129,6 +99,8 @@ class MQ135Sensor(BaseSensor):
         super().__init__(sensor_id, asset_id, "Zone-2")
         self.digital_pin = digital_pin
         self.analog_pin = analog_pin
+        self.warmup_time = 60  # MQ135 needs 60 seconds warmup
+        self.start_time = time.time()
         self.setup_pins()
     
     def setup_pins(self):
@@ -139,62 +111,54 @@ class MQ135Sensor(BaseSensor):
             
         try:
             GPIO.setup(self.digital_pin, GPIO.IN)
-            # For MQ135, if the sensor is powered and connected, assume it's active
-            # The sensor needs warm-up time and will show readings once stabilized
             self.is_active = True
-            logger.info("MQ135 sensor initialized and set to active")
+            logger.info("MQ135 sensor initialized - warming up...")
         except Exception as e:
             self.is_active = False
             logger.error(f"Error setting up MQ135 sensor: {e}")
     
-    def _test_sensor_connection(self) -> bool:
-        """Simplified test - if we can read the pin, sensor is considered connected"""
-        try:
-            # Just try to read the pin - if no exception, sensor is connected
-            GPIO.input(self.digital_pin)
-            return True
-        except Exception as e:
-            logger.error(f"MQ135 sensor connection test failed: {e}")
-            return False
-    
     def get_sensor_type(self) -> str:
         return "air_quality"
+    
+    def is_warmed_up(self) -> bool:
+        return (time.time() - self.start_time) >= self.warmup_time
     
     def read_sensor_data(self) -> Optional[Dict[str, Any]]:
         if not self.is_active or not GPIO_AVAILABLE:
             return None
             
         try:
-            # Test basic connection first
-            if not self._test_sensor_connection():
-                self.is_active = False
-                return None
-                
-            # Read the digital output (LOW means gas detected for most MQ135 modules)
-            digital_value = GPIO.input(self.digital_pin)
-            gas_detected = not digital_value  # Inverted logic for most modules
+            if not self.is_warmed_up():
+                warmup_remaining = self.warmup_time - (time.time() - self.start_time)
+                return {
+                    'warming_up': True,
+                    'warmup_remaining_seconds': int(warmup_remaining),
+                    'digital_value': GPIO.input(self.digital_pin),
+                    'pins': {'digital': self.digital_pin, 'analog': self.analog_pin}
+                }
             
-            # Simulate analog reading based on digital state
-            # In a real setup, you'd use an ADC to read analog value
-            if gas_detected:
-                ppm = random.randint(800, 1200)  # High gas concentration
-                quality_level = "Poor"
-            else:
-                ppm = random.randint(300, 500)   # Normal air quality
-                quality_level = "Good"
+            # Read the digital output
+            digital_value = GPIO.input(self.digital_pin)
+            gas_detected = not digital_value  # Most MQ135 modules are active LOW
+            
+            # For real analog reading, you would need an ADC like MCP3008
+            # This is a placeholder - replace with actual ADC reading
+            # Example with MCP3008:
+            # import spidev
+            # spi = spidev.SpiDev()
+            # spi.open(0, 0)
+            # analog_value = spi.xfer2([1, (8 + self.analog_pin) << 4, 0])[2]
             
             return {
-                'air_quality_ppm': ppm,
                 'gas_detected': gas_detected,
-                'quality_level': quality_level,
-                'co2_equivalent': round(ppm * 2, 2),
                 'digital_value': digital_value,
-                'pins': {'digital': self.digital_pin, 'analog': self.analog_pin}
+                'sensor_warmed_up': True,
+                'pins': {'digital': self.digital_pin, 'analog': self.analog_pin},
+                'note': 'For PPM readings, connect to ADC (MCP3008) and implement analog conversion'
             }
             
         except Exception as e:
             logger.error(f"MQ135 sensor error: {e}")
-            self.is_active = False
             return None
 
 class DHT11Sensor(BaseSensor):
@@ -214,40 +178,14 @@ class DHT11Sensor(BaseSensor):
         try:
             import Adafruit_DHT
             self.dht = Adafruit_DHT
-            
-            # Test if sensor is actually connected by attempting a reading
-            if self._test_sensor_connection():
-                self.is_active = True
-                logger.info("DHT11 sensor connected and active")
-            else:
-                self.is_active = False
-                logger.warning("DHT11 sensor not responding - possibly disconnected")
-                
+            self.is_active = True
+            logger.info("DHT11 sensor initialized")
         except ImportError:
             self.is_active = False
             logger.warning("Adafruit_DHT module not available - DHT11 sensor not active")
         except Exception as e:
             self.is_active = False
             logger.error(f"Error setting up DHT11 sensor: {e}")
-    
-    def _test_sensor_connection(self) -> bool:
-        """Test if the DHT11 sensor is actually connected"""
-        try:
-            # Attempt to read from the sensor
-            humidity, temperature = self.dht.read_retry(self.dht.DHT11, self.data_pin, retries=3, delay_seconds=1)
-            
-            # If we get valid readings, sensor is connected
-            if humidity is not None and temperature is not None:
-                # Basic sanity check for reasonable values
-                if 0 <= humidity <= 100 and -40 <= temperature <= 80:
-                    return True
-            
-            logger.warning("DHT11 sensor test failed - no valid readings")
-            return False
-            
-        except Exception as e:
-            logger.error(f"DHT11 sensor connection test failed: {e}")
-            return False
     
     def get_sensor_type(self) -> str:
         return "temperature_humidity"
@@ -257,35 +195,53 @@ class DHT11Sensor(BaseSensor):
             return None
             
         try:
-            humidity, temperature = self.dht.read_retry(self.dht.DHT11, self.data_pin, retries=3)
+            # DHT11 readings can be unreliable, so we retry with delays
+            humidity, temperature = self.dht.read_retry(
+                self.dht.DHT11, 
+                self.data_pin, 
+                retries=3, 
+                delay_seconds=2
+            )
             
             if humidity is not None and temperature is not None:
-                # Validate readings are reasonable
-                if 0 <= humidity <= 100 and -40 <= temperature <= 80:
+                # Validate readings are reasonable for DHT11
+                if 20 <= humidity <= 95 and -20 <= temperature <= 60:
                     return {
-                        'temperature': round(temperature, 2),
-                        'humidity': round(humidity, 2),
+                        'temperature_celsius': round(temperature, 1),
+                        'temperature_fahrenheit': round((temperature * 9/5) + 32, 1),
+                        'humidity_percent': round(humidity, 1),
                         'comfort_level': self._calculate_comfort_level(temperature, humidity),
+                        'dew_point': round(self._calculate_dew_point(temperature, humidity), 1),
                         'pin': self.data_pin
                     }
-            
-            # If we get invalid readings, sensor might be disconnected
-            logger.warning("DHT11 sensor returned invalid readings")
-            self.is_active = False
-            return None
+                else:
+                    logger.debug(f"DHT11 readings out of range: T={temperature}, H={humidity}")
+                    return None
+            else:
+                logger.debug("DHT11 returned None values")
+                return None
             
         except Exception as e:
             logger.error(f"DHT11 sensor error: {e}")
-            self.is_active = False
             return None
     
     def _calculate_comfort_level(self, temp: float, humidity: float) -> str:
-        if 20 <= temp <= 25 and 30 <= humidity <= 60:
+        if 20 <= temp <= 25 and 40 <= humidity <= 60:
             return "Comfortable"
         elif temp > 25 or humidity > 60:
-            return "Uncomfortable-Hot"
+            return "Too Hot/Humid"
+        elif temp < 20 or humidity < 40:
+            return "Too Cold/Dry"
         else:
-            return "Uncomfortable-Cold"
+            return "Borderline"
+    
+    def _calculate_dew_point(self, temp: float, humidity: float) -> float:
+        # Simplified dew point calculation
+        import math
+        a = 17.27
+        b = 237.7
+        alpha = ((a * temp) / (b + temp)) + math.log(humidity / 100.0)
+        return (b * alpha) / (a - alpha)
 
 class LDRSensor(BaseSensor):
     def __init__(self, sensor_id: str = "LDR-01", asset_id: str = "LIGHT-SENSOR-01",
@@ -302,23 +258,11 @@ class LDRSensor(BaseSensor):
             
         try:
             GPIO.setup(self.ldr_pin, GPIO.IN)
-            # For LDR, if we can set up the pin, assume sensor is connected
-            # LDR with proper circuit should always give some reading
             self.is_active = True
-            logger.info("LDR sensor initialized and set to active")
+            logger.info("LDR sensor initialized")
         except Exception as e:
             self.is_active = False
             logger.error(f"Error setting up LDR sensor: {e}")
-    
-    def _test_sensor_connection(self) -> bool:
-        """Simplified test - if we can read the pin, sensor is considered connected"""
-        try:
-            # Just try to read the pin - if no exception, sensor is connected
-            GPIO.input(self.ldr_pin)
-            return True
-        except Exception as e:
-            logger.error(f"LDR sensor connection test failed: {e}")
-            return False
     
     def get_sensor_type(self) -> str:
         return "light_sensor"
@@ -328,31 +272,23 @@ class LDRSensor(BaseSensor):
             return None
             
         try:
-            # Test basic connection first
-            if not self._test_sensor_connection():
-                self.is_active = False
-                return None
-                
-            # Read the digital value from LDR circuit
-            light_value = GPIO.input(self.ldr_pin)
+            # For digital LDR with comparator circuit
+            light_digital = GPIO.input(self.ldr_pin)
             
-            # Convert to meaningful light level
-            light_level = "High" if light_value == 1 else "Low"
-            
-            # Add some additional calculated values
-            light_percentage = 100 if light_value == 1 else 20
+            # If you want analog readings, you need an ADC
+            # For now, providing digital interpretation
+            light_detected = bool(light_digital)
             
             return {
-                'light_level': light_level,
-                'light_percentage': light_percentage,
-                'raw_value': light_value,
-                'brightness': "Bright" if light_value == 1 else "Dark",
-                'pin': self.ldr_pin
+                'light_detected': light_detected,
+                'light_level': "Bright" if light_detected else "Dark",
+                'digital_value': light_digital,
+                'pin': self.ldr_pin,
+                'note': 'For analog readings, connect LDR to ADC (MCP3008)'
             }
             
         except Exception as e:
             logger.error(f"LDR sensor error: {e}")
-            self.is_active = False
             return None
 
 class PIRSensor(BaseSensor):
@@ -372,48 +308,13 @@ class PIRSensor(BaseSensor):
             
         try:
             GPIO.setup(self.data_pin, GPIO.IN)
-            
-            # Test if sensor is actually connected
-            if self._test_sensor_connection():
-                self.is_active = True
-                logger.info("PIR sensor connected and active")
-            else:
-                self.is_active = False
-                logger.warning("PIR sensor not detected - possibly disconnected")
-                
+            # PIR sensors need settling time
+            time.sleep(2)
+            self.is_active = True
+            logger.info("PIR sensor initialized")
         except Exception as e:
             self.is_active = False
             logger.error(f"Error setting up PIR sensor: {e}")
-    
-    def _test_sensor_connection(self) -> bool:
-        """Test if the PIR sensor is actually connected"""
-        try:
-            # PIR sensors typically have a warm-up period and should show some activity
-            # Read the pin multiple times to check for expected behavior
-            readings = []
-            for _ in range(50):  # Sample for 2.5 seconds
-                readings.append(GPIO.input(self.data_pin))
-                time.sleep(0.05)
-            
-            # Check for any variation in readings
-            unique_readings = set(readings)
-            
-            if len(unique_readings) == 1:
-                # All readings are the same - check if it's a valid state
-                if all(r == 0 for r in readings):
-                    # All LOW - could be normal idle state for PIR
-                    return True
-                else:
-                    # All HIGH - likely floating pin or disconnected
-                    logger.warning("PIR shows constant HIGH - sensor may be disconnected")
-                    return False
-            
-            # We have variation - sensor is likely connected
-            return True
-            
-        except Exception as e:
-            logger.error(f"PIR sensor connection test failed: {e}")
-            return False
     
     def get_sensor_type(self) -> str:
         return "motion_sensor"
@@ -423,21 +324,26 @@ class PIRSensor(BaseSensor):
             return None
             
         try:
-            motion_detected = GPIO.input(self.data_pin)
+            motion_detected = bool(GPIO.input(self.data_pin))
             current_time = datetime.now(timezone.utc)
             
             if motion_detected:
                 self.motion_count += 1
                 self.last_motion_time = current_time
             
+            # Calculate time since last motion
+            time_since_motion = None
+            if self.last_motion_time:
+                time_since_motion = int((current_time - self.last_motion_time).total_seconds())
+            
             return {
-                'motion_detected': bool(motion_detected),
+                'motion_detected': motion_detected,
                 'motion_count': self.motion_count,
-                'last_motion': self.last_motion_time.isoformat() if self.last_motion_time else None,
+                'last_motion_time': self.last_motion_time.isoformat() if self.last_motion_time else None,
+                'time_since_motion_seconds': time_since_motion,
                 'pin': self.data_pin
             }
             
         except Exception as e:
             logger.error(f"PIR sensor error: {e}")
-            self.is_active = False
             return None

@@ -17,7 +17,8 @@ class BaseSensor(ABC):
         self.current_reading = {}
         self.is_active = False
         self.connection_failures = 0
-        self.max_connection_failures = 3  # Allow 3 consecutive failures before marking inactive
+        self.max_connection_failures = 5  # Increased from 3 to 5
+        self.consecutive_failed_reads = 0  # Track consecutive failures
         
     @abstractmethod
     def read_sensor_data(self) -> Optional[Dict[str, Any]]:
@@ -37,27 +38,37 @@ class BaseSensor(ABC):
                 with self.lock:
                     self.current_reading = data
                     self.last_reading_time = datetime.now(timezone.utc)
-                    self.connection_failures = 0  # Reset failure count on successful read
+                    self.connection_failures = 0  # Reset failure count
+                    self.consecutive_failed_reads = 0  # Reset consecutive failures
                     if not self.is_active:
                         self.is_active = True
                         logger.info(f"Sensor {self.sensor_id} reconnected")
             else:
-                # Increment failure count
-                self.connection_failures += 1
-                if self.connection_failures >= self.max_connection_failures:
-                    if self.is_active:
-                        logger.warning(f"Sensor {self.sensor_id} marked as inactive after {self.connection_failures} failures")
-                    self.is_active = False
-                    with self.lock:
-                        self.current_reading = {}  # Clear readings for inactive sensor
+                # Only increment if sensor was previously active
+                if self.is_active:
+                    self.consecutive_failed_reads += 1
+                    
+                    # Only mark as inactive after several consecutive failures
+                    if self.consecutive_failed_reads >= self.max_connection_failures:
+                        logger.warning(f"Sensor {self.sensor_id} marked as inactive after {self.consecutive_failed_reads} consecutive failed reads")
+                        self.is_active = False
+                        with self.lock:
+                            self.current_reading = {}
+                        self.connection_failures += 1
+                else:
+                    # If sensor is already inactive, just log occasionally
+                    if self.consecutive_failed_reads % 60 == 0:  # Log every 60 attempts
+                        logger.debug(f"Sensor {self.sensor_id} still inactive")
                         
         except Exception as e:
             logger.error(f"Error updating {self.sensor_id}: {e}")
-            self.connection_failures += 1
-            if self.connection_failures >= self.max_connection_failures:
-                self.is_active = False
-                with self.lock:
-                    self.current_reading = {}
+            if self.is_active:
+                self.consecutive_failed_reads += 1
+                if self.consecutive_failed_reads >= self.max_connection_failures:
+                    self.is_active = False
+                    self.connection_failures += 1
+                    with self.lock:
+                        self.current_reading = {}
     
     def get_reading(self) -> Dict[str, Any]:
         """Get the current sensor reading"""
@@ -68,15 +79,15 @@ class BaseSensor(ABC):
                 'assetId': self.asset_id,
                 'zone_id': self.zone_id,
                 'timestamp': self.last_reading_time.isoformat() if self.last_reading_time else None,
-                'status': 'active' if self.is_active else 'inactive'
+                'status': 'active' if self.is_active else 'inactive',
+                'consecutive_failures': self.consecutive_failed_reads
             }
             
-            # Only include sensor data if the sensor is active
-            if self.is_active and self.current_reading:
+            # Always include current reading data, even if sensor is inactive
+            if self.current_reading:
                 base_info.update(self.current_reading)
             else:
-                # For inactive sensors, don't include sensor data
-                base_info['message'] = 'Sensor not connected or not responding'
+                base_info['message'] = f'No data - {self.consecutive_failed_reads} consecutive failures'
             
             return base_info
     
@@ -89,16 +100,19 @@ class BaseSensor(ABC):
             return False
         
         time_since_reading = (datetime.now(timezone.utc) - self.last_reading_time).total_seconds()
-        return time_since_reading < 30  # Healthy if reading within last 30 seconds
+        return time_since_reading < 60  # Healthy if reading within last 60 seconds (increased from 30)
     
     def reset_connection(self):
-        """Reset connection failure counter - useful for manual reconnection attempts"""
+        """Reset connection failure counter"""
         self.connection_failures = 0
+        self.consecutive_failed_reads = 0
         logger.info(f"Connection failure counter reset for sensor {self.sensor_id}")
     
     def force_reconnect(self):
-        """Force a reconnection attempt by calling setup_pins if available"""
+        """Force a reconnection attempt"""
+        logger.info(f"Attempting to reconnect sensor {self.sensor_id}")
+        self.reset_connection()
         if hasattr(self, 'setup_pins'):
-            logger.info(f"Attempting to reconnect sensor {self.sensor_id}")
-            self.reset_connection()
             self.setup_pins()
+        # Try a test reading
+        self.update_reading()
