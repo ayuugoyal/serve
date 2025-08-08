@@ -23,6 +23,3 @@ scipy==1.10.1
 
 # Optional: For sensor calibration and curve fitting
 matplotlib==3.7.2
-
-# Development and debugging
-logging
