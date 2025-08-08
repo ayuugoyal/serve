@@ -23,3 +23,8 @@ scipy==1.10.1
 
 # Optional: For sensor calibration and curve fitting
 matplotlib==3.7.2
+# Database dependencies
+psycopg2-binary==2.9.7
+asyncpg==0.28.3
+sqlalchemy==2.0.21
+alembic==1.12.0

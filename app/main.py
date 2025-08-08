@@ -16,6 +16,7 @@ import logging
 import asyncio
 from collections import defaultdict, deque
 import uvicorn
+from database.db_config import db_manager
 
 # Import our modules
 from models.sensor_models import *
@@ -174,6 +175,180 @@ async def get_dashboard():
     except Exception as e:
         logger.error(f"Error getting dashboard: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    
+
+@app.get("/api/asset-ids")
+async def get_asset_ids():
+    """Get all asset IDs"""
+    try:
+        asset_ids = await db_manager.get_asset_ids()
+        return {"data": asset_ids}
+    except Exception as e:
+        logger.error(f"Error getting asset IDs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/asset-ids")
+async def add_asset_id(request: dict):
+    """Add new asset ID"""
+    try:
+        assetid = request.get("assetid")
+        if not assetid:
+            raise HTTPException(status_code=400, detail="assetid is required")
+        
+        result = await db_manager.add_asset_id(assetid)
+        return {"data": result}
+    except Exception as e:
+        logger.error(f"Error adding asset ID: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/asset-ids")
+async def update_asset_id(request: dict):
+    """Update asset ID"""
+    try:
+        id = request.get("id")
+        assetid = request.get("assetid")
+        if not id or not assetid:
+            raise HTTPException(status_code=400, detail="id and assetid are required")
+        
+        success = await db_manager.update_asset_id(id, assetid)
+        if not success:
+            raise HTTPException(status_code=404, detail="Asset ID not found")
+        
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"Error updating asset ID: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/asset-ids")
+async def delete_asset_id(request: dict):
+    """Delete asset ID"""
+    try:
+        id = request.get("id")
+        if not id:
+            raise HTTPException(status_code=400, detail="id is required")
+        
+        success = await db_manager.delete_asset_id(id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Asset ID not found")
+        
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"Error deleting asset ID: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/sensors-to-asset-ids")
+async def get_sensors_to_asset_ids():
+    """Get sensor to asset ID mappings"""
+    try:
+        mappings = await db_manager.get_sensors_to_asset_ids()
+        return {"data": mappings}
+    except Exception as e:
+        logger.error(f"Error getting sensor mappings: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/sensors-to-asset-ids")
+async def add_sensor_to_asset_id(request: dict):
+    """Add sensor to asset ID mapping"""
+    try:
+        sensor_name = request.get("sensorName")
+        assetids = request.get("assetids")
+        if not sensor_name:
+            raise HTTPException(status_code=400, detail="sensorName is required")
+        
+        result = await db_manager.upsert_sensor_to_asset_id(sensor_name, assetids)
+        return {"data": result}
+    except Exception as e:
+        logger.error(f"Error adding sensor mapping: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/sensors-to-asset-ids")
+async def update_sensor_to_asset_id(request: dict):
+    """Update sensor to asset ID mapping"""
+    try:
+        sensor_name = request.get("sensorName")
+        assetids = request.get("assetids")
+        if not sensor_name:
+            raise HTTPException(status_code=400, detail="sensorName is required")
+        
+        result = await db_manager.upsert_sensor_to_asset_id(sensor_name, assetids)
+        return {"data": result}
+    except Exception as e:
+        logger.error(f"Error updating sensor mapping: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/sensors-to-asset-ids")
+async def delete_sensor_to_asset_id(request: dict):
+    """Delete sensor to asset ID mapping"""
+    try:
+        id = request.get("id")
+        if not id:
+            raise HTTPException(status_code=400, detail="id is required")
+        
+        success = await db_manager.delete_sensor_to_asset_id(id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Sensor mapping not found")
+        
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"Error deleting sensor mapping: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/alerts-to-asset-ids")
+async def get_alerts_to_asset_ids():
+    """Get alert to asset ID mappings"""
+    try:
+        mappings = await db_manager.get_alerts_to_asset_ids()
+        return {"data": mappings}
+    except Exception as e:
+        logger.error(f"Error getting alert mappings: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/alerts-to-asset-ids")
+async def add_alert_to_asset_id(request: dict):
+    """Add alert to asset ID mapping"""
+    try:
+        alert_type = request.get("alertType")
+        assetids = request.get("assetids")
+        if not alert_type:
+            raise HTTPException(status_code=400, detail="alertType is required")
+        
+        result = await db_manager.upsert_alert_to_asset_id(alert_type, assetids)
+        return {"data": result}
+    except Exception as e:
+        logger.error(f"Error adding alert mapping: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/alerts-to-asset-ids")
+async def update_alert_to_asset_id(request: dict):
+    """Update alert to asset ID mapping"""
+    try:
+        alert_type = request.get("alertType")
+        assetids = request.get("assetids")
+        if not alert_type:
+            raise HTTPException(status_code=400, detail="alertType is required")
+        
+        result = await db_manager.upsert_alert_to_asset_id(alert_type, assetids)
+        return {"data": result}
+    except Exception as e:
+        logger.error(f"Error updating alert mapping: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/alerts-to-asset-ids")
+async def delete_alert_to_asset_id(request: dict):
+    """Delete alert to asset ID mapping"""
+    try:
+        id = request.get("id")
+        if not id:
+            raise HTTPException(status_code=400, detail="id is required")
+        
+        success = await db_manager.delete_alert_to_asset_id(id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Alert mapping not found")
+        
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"Error deleting alert mapping: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/health")
 async def health_check():
@@ -203,16 +378,20 @@ def background_sensor_loop():
 @app.on_event("startup")
 async def startup_event():
     """Initialize the application"""
+    # Initialize database
+    await db_manager.initialize()
+    
     # Start background sensor reading
     sensor_thread = Thread(target=background_sensor_loop, daemon=True)
     sensor_thread.start()
     
-    logger.info("Sensor monitoring system started")
+    logger.info("Sensor monitoring system started with database integration")
     logger.info(f"Available sensors: {list(sensor_manager.sensors.keys())}")
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup on shutdown"""
+    await db_manager.close()
     sensor_manager.cleanup()
     logger.info("Sensor monitoring system stopped")
 

@@ -150,20 +150,26 @@ class SensorManager:
                 self.diagnostics['sensor_stats'][sensor_type]['failed_reads'] += 1
                 self.diagnostics['sensor_stats'][sensor_type]['last_failure'] = time.time()
     
-    def get_all_readings(self) -> List[Dict[str, Any]]:
-        """Get readings from all sensors - real data only"""
+    async def get_all_readings(self) -> List[Dict[str, Any]]:
+        """Get readings from all sensors with asset IDs from database"""
+        from database.db_config import db_manager
+        
         readings = []
         for sensor_type, sensor in self.sensors.items():
             try:
                 reading = sensor.get_reading()
+                
+                # Get asset ID from database
+                asset_id = await db_manager.get_sensor_asset_id(sensor.sensor_id)
+                reading['assetId'] = asset_id
                 
                 # Add diagnostic info
                 reading['diagnostic_info'] = {
                     'consecutive_failures': sensor.consecutive_failed_reads,
                     'connection_failures': sensor.connection_failures,
                     'uptime_minutes': (time.time() - self.diagnostics['startup_time']) / 60,
-                    'hardware_type': 'REAL_SENSOR',  # Clearly mark as real hardware
-                    'simulation': False  # Explicitly state no simulation
+                    'hardware_type': 'REAL_SENSOR',
+                    'simulation': False
                 }
                 
                 # Add hardware-specific info
@@ -176,6 +182,8 @@ class SensorManager:
                 logger.error(f"Error getting reading from {sensor_type}: {e}")
                 readings.append({
                     'sensor_type': sensor_type,
+                    'sensor_id': sensor.sensor_id,
+                    'assetId': 'no-asset-id-assigned',
                     'status': 'error',
                     'error': str(e),
                     'consecutive_failures': getattr(sensor, 'consecutive_failed_reads', 0),
@@ -183,7 +191,7 @@ class SensorManager:
                     'simulation': False
                 })
         return readings
-    
+
     def get_sensor_reading(self, sensor_type: str) -> Dict[str, Any]:
         """Get reading from specific sensor - real data only"""
         if sensor_type not in self.sensors:
