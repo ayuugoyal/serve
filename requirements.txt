@@ -25,6 +25,6 @@ scipy==1.10.1
 matplotlib==3.7.2
 # Database dependencies
 psycopg2-binary==2.9.7
-asyncpg==0.28.3
+asyncpg
 sqlalchemy==2.0.21
 alembic==1.12.0
