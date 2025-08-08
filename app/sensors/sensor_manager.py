@@ -12,14 +12,14 @@ class SensorManager:
             # Temperature and Humidity
             'temperature_humidity': DHT22Sensor(
                 sensor_id="DHT22-01", 
-                asset_id="TEMP-HUM-01", 
+                asset_id="MCN-04", 
                 data_pin=22
             ),
             
             # Air Quality
             'air_quality': MQ135Sensor(
                 sensor_id="MQ135-01", 
-                asset_id="AIR-QUALITY-01",
+                asset_id="MCN-05",
                 digital_pin=25, 
                 spi_channel=0, 
                 adc_channel=0
@@ -28,14 +28,14 @@ class SensorManager:
             # Light Sensor
             'light_sensor': BH1750Sensor(
                 sensor_id="BH1750-01", 
-                asset_id="LIGHT-SENSOR-01",
+                asset_id="MCN-06",
                 i2c_address=0x23
             ),
             
             # Dust/Particle Sensor
             'dust_sensor': GP2Y1010AU0FSensor(
                 sensor_id="GP2Y1010-01", 
-                asset_id="DUST-SENSOR-01",
+                asset_id="MCN-07",
                 led_pin=7, 
                 adc_channel=1, 
                 spi_channel=0
@@ -44,7 +44,7 @@ class SensorManager:
             # Vibration Sensor
             'vibration_sensor': PiezoVibrationSensor(
                 sensor_id="PIEZO-01", 
-                asset_id="VIBRATION-SENSOR-01",
+                asset_id="MCN-08",
                 analog_pin=2, 
                 threshold=100
             ),
@@ -52,7 +52,7 @@ class SensorManager:
             # Motion Radar Sensor
             'motion_radar': HLK_LD2420Sensor(
                 sensor_id="LD2420-01", 
-                asset_id="MOTION-RADAR-01",
+                asset_id="MCN-09",
                 uart_port="/dev/ttyUSB0", 
                 baud_rate=256000
             ),
@@ -60,7 +60,7 @@ class SensorManager:
             # Ultrasonic Distance Sensor
             'ultrasonic': UltrasonicSensor(
                 sensor_id="HCSR04-01", 
-                asset_id="ULTRASONIC-01",
+                asset_id="MCN-10",
                 trigger_pin=18, 
                 echo_pin=24
             )
