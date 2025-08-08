@@ -4,3 +4,25 @@ pydantic==2.5.0
 websockets==12.0
 RPi.GPIO==0.7.1
 Adafruit-DHT==1.4.0
+
+
+# SPI interface for ADC sensors (MQ135, GP2Y1010AU0F, Piezo)
+spidev==3.6
+
+# I2C interface for BH1750 light sensor
+smbus2==0.4.3
+
+# UART/Serial interface for HLK-LD2420 radar sensor
+pyserial==3.5
+
+# Additional utilities
+numpy==1.24.3
+
+# Optional: For advanced sensor data processing
+scipy==1.10.1
+
+# Optional: For sensor calibration and curve fitting
+matplotlib==3.7.2
+
+# Development and debugging
+logging
