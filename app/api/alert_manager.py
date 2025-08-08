@@ -8,10 +8,11 @@ from config.settings import ALERT_CONFIGURATIONS
 logger = logging.getLogger(__name__)
 
 class AlertManager:
-    def __init__(self):
+    def __init__(self, db_manager=None):
         self.alerts = deque(maxlen=1000)  # Store last 1000 alerts
         self.alert_cooldowns = {}
         self.alert_configs = ALERT_CONFIGURATIONS.copy()
+        self.db_manager = db_manager
         
         # Tracking variables for complex alerts
         self.zone_entry_times = defaultdict(list)
@@ -19,14 +20,55 @@ class AlertManager:
         self.co2_exposure_tracking = defaultdict(float)
         self.high_humidity_start_times = {}
         
-    def generate_alert(self, alert_type: str, description: str, priority: str = "Medium", zone_id: str = "Zone-1") -> Dict:
-        """Generate a new alert - sync version"""
+    def set_db_manager(self, db_manager):
+        """Set the database manager for asset ID resolution"""
+        self.db_manager = db_manager
+        logger.info("Database manager connected to AlertManager")
+        
+    async def generate_alert(self, alert_type: str, description: str, priority: str = "Medium", zone_id: str = "Zone-1") -> Dict:
+        """Generate a new alert with automatic asset ID assignment"""
         alert_id = f"ALERT_{alert_type}_{int(time.time())}"
         
-        # Use default asset ID - will be updated by API layer
+        # Try to get asset ID from database
+        asset_id = "no-asset-id-assigned"  # Default
+        if self.db_manager:
+            try:
+                asset_id = await self.db_manager.get_alert_asset_id(alert_type)
+                logger.debug(f"Resolved asset ID '{asset_id}' for alert type '{alert_type}'")
+            except Exception as e:
+                logger.warning(f"Failed to resolve asset ID for alert {alert_type}: {e}")
+                asset_id = "no-asset-id-assigned"
+        
         alert = {
             "AlertType": alert_type,
-            "assetId": "no-asset-id-assigned",  # Will be updated later
+            "assetId": asset_id,
+            "Description": description,
+            "Date": datetime.now(timezone.utc).isoformat(),
+            "Report": "Smart Building Alert",
+            "App": "IoT Sensor System",
+            "anchor": zone_id,
+            "Stage_x007b__x0023__x007d_": "Active",
+            "Failure_x0020_Class": "Smart_Building_Logic",
+            "id": alert_id,
+            "Priority": priority,
+            "OperatorNumber": "SYS-001",
+            "OperatorName": "Smart Building AI",
+            "ManagerName": "Facility Manager",
+            "ManagerNumber": "FM-001",
+            "GoogleDriveURL": "NaN"
+        }
+        
+        self.alerts.append(alert)
+        logger.info(f"Generated alert: {alert_type} - {description} (Asset ID: {asset_id})")
+        return alert
+
+    def generate_alert_sync(self, alert_type: str, description: str, priority: str = "Medium", zone_id: str = "Zone-1") -> Dict:
+        """Synchronous version of generate_alert for backward compatibility"""
+        alert_id = f"ALERT_{alert_type}_{int(time.time())}"
+        
+        alert = {
+            "AlertType": alert_type,
+            "assetId": "no-asset-id-assigned",  # Will be updated later by API layer
             "Description": description,
             "Date": datetime.now(timezone.utc).isoformat(),
             "Report": "Smart Building Alert",
@@ -71,7 +113,7 @@ class AlertManager:
         if not readings_dict:
             return
         
-        # Check each alert type
+        # Check each alert type (using sync version for now)
         self.check_hvac_load_control(readings_dict)
         self.check_sick_building_alert(readings_dict)
         self.check_people_density_alert(readings_dict)
@@ -95,7 +137,7 @@ class AlertManager:
         if temp_reading and air_reading:
             temp = temp_reading.get('temperature_celsius', 0)
             humidity = temp_reading.get('humidity_percent', 0)
-            # Remove simulation - only use real sensor data
+            
             if 'gas_detected' in air_reading:
                 gas_level = "Low" if not air_reading.get('gas_detected', False) else "High"
             else:
@@ -111,7 +153,7 @@ class AlertManager:
                     description = (f"🌡️ Optimal conditions for reduced HVAC load: "
                                  f"Temp = {temp}°C, Humidity = {humidity}%, Gas Level = {gas_level}. "
                                  f"Consider switching to energy-saving mode.")
-                    self.generate_alert("Smart_HVAC_Load_Control", description, priority)
+                    self.generate_alert_sync("Smart_HVAC_Load_Control", description, priority)
     
     def check_sick_building_alert(self, readings: Dict):
         """Predictive Sick Building Alert"""
@@ -139,7 +181,7 @@ class AlertManager:
                                  f"Gas Detected = {gas_detected}, Motion = {motion_detected}, "
                                  f"Humidity = {humidity}%, Temp = {temperature}°C. "
                                  f"Activate ventilation immediately.")
-                    self.generate_alert("Predictive_Sick_Building_Alert", description, priority)
+                    self.generate_alert_sync("Predictive_Sick_Building_Alert", description, priority)
     
     def check_people_density_alert(self, readings: Dict):
         """People Density Alert based on motion and distance"""
@@ -166,7 +208,7 @@ class AlertManager:
                 self.zone_entry_times[zone_id] = [t for t in self.zone_entry_times[zone_id] if t > cutoff_time]
                 
                 recent_entries = len(self.zone_entry_times[zone_id])
-                entry_threshold = config.get('entry_count_threshold', 10)  # Reduced from 19
+                entry_threshold = config.get('entry_count_threshold', 10)
                 cooldown = config.get('cooldown_minutes', 10)
                 priority = config.get('priority', 'High')
                 
@@ -175,7 +217,7 @@ class AlertManager:
                         description = (f"🚨 High activity detected: {recent_entries} motion events in 10 mins. "
                                      f"Distance = {distance}cm, Motion Count = {motion_count}. "
                                      f"Consider increasing ventilation.")
-                        self.generate_alert("People_Density_Alert", description, priority, zone_id)
+                        self.generate_alert_sync("People_Density_Alert", description, priority, zone_id)
     
     def check_attendance_accuracy(self, readings: Dict):
         """Zone-Level Attendance Accuracy based on motion patterns"""
@@ -187,7 +229,6 @@ class AlertManager:
         
         if motion_reading:
             time_since_motion = motion_reading.get('time_since_motion_seconds')
-            motion_detected = motion_reading.get('motion_detected', False)
             
             motion_timeout_minutes = config.get('motion_timeout_minutes', 20)
             cooldown = config.get('cooldown_minutes', 20)  
@@ -197,7 +238,7 @@ class AlertManager:
                 if self.should_generate_alert("Zone_Level_Attendance_Accuracy", cooldown):
                     description = (f"📛 No motion detected for {time_since_motion//60} minutes. "
                                  f"Zone may be unoccupied but marked as occupied. Please verify.")
-                    self.generate_alert("Zone_Level_Attendance_Accuracy", description, priority)
+                    self.generate_alert_sync("Zone_Level_Attendance_Accuracy", description, priority)
 
     def check_dehumidifier_trigger(self, readings: Dict):
         """Dehumidifier Smart Trigger"""
@@ -229,7 +270,7 @@ class AlertManager:
                             description = (f"💧 {zone_id}: Humidity = {humidity}% for {duration//60:.0f} minutes. "
                                          f"Temperature = {temperature}°C. "
                                          f"Risk of condensation and mold - activate dehumidifier.")
-                            self.generate_alert("Dehumidifier_Smart_Trigger", description, priority, zone_id)
+                            self.generate_alert_sync("Dehumidifier_Smart_Trigger", description, priority, zone_id)
             else:
                 # Reset timer when humidity drops
                 if zone_id in self.high_humidity_start_times:
@@ -262,7 +303,7 @@ class AlertManager:
                     description = (f"🌫️ Air quality degraded with occupancy: "
                                  f"Gas Detected = {gas_detected}, Motion = {motion_detected}, "
                                  f"Distance = {distance}cm. Initiate ventilation escalation.")
-                    self.generate_alert("Smart_Ventilation_Escalation", description, priority)
+                    self.generate_alert_sync("Smart_Ventilation_Escalation", description, priority)
 
     def check_esg_score(self, readings: Dict):
         """Real-Time ESG Score by Zone"""
@@ -296,7 +337,7 @@ class AlertManager:
                                  f"Temp = {temp}°C, Humidity = {humidity}%, "
                                  f"Air Quality = {'Poor' if gas_detected else 'Good'}. "
                                  f"Review environmental controls.")
-                    self.generate_alert("Real_Time_ESG_Score", description, priority, zone_id)
+                    self.generate_alert_sync("Real_Time_ESG_Score", description, priority, zone_id)
 
     def check_vip_air_quality(self, readings: Dict):
         """VIP Room Air Quality Insurance"""
@@ -330,7 +371,7 @@ class AlertManager:
                     
                     description = (f"🛑 {zone_id}: Temperature optimal ({temp}°C) but "
                                  f"{' and '.join(issues)}. Immediate attention required.")
-                    self.generate_alert("VIP_Room_Air_Quality", description, priority, zone_id)
+                    self.generate_alert_sync("VIP_Room_Air_Quality", description, priority, zone_id)
 
     def check_toilet_cleaning_trigger(self, readings: Dict):
         """Toilet Occupancy + Cleaning Trigger"""
@@ -355,7 +396,7 @@ class AlertManager:
             
             humidity_threshold = config.get('humidity_threshold', 70.0)
             duration_minutes = config.get('duration_minutes', 30)
-            usage_threshold = config.get('usage_threshold', 25)  # Reduced from 50
+            usage_threshold = config.get('usage_threshold', 25)
             cooldown = config.get('cooldown_minutes', 45)
             priority = config.get('priority', 'Medium')
             
@@ -371,7 +412,7 @@ class AlertManager:
                             description = (f"🚻 {zone_id}: {self.daily_usage_stats[zone_id]} usage events today. "
                                          f"Humidity = {humidity}% for {duration//60:.0f} minutes. "
                                          f"Motion events = {motion_count}. Schedule cleaning.")
-                            self.generate_alert("Toilet_Occupancy_Cleaning", description, priority, zone_id)
+                            self.generate_alert_sync("Toilet_Occupancy_Cleaning", description, priority, zone_id)
             else:
                 # Reset humidity timer
                 if zone_id in self.high_humidity_start_times:
@@ -389,7 +430,7 @@ class AlertManager:
             gas_detected = air_reading.get('gas_detected', False)
             zone_id = air_reading.get('zone_id', 'Zone-1')
             
-            exposure_hours_threshold = config.get('exposure_hours_threshold', 2.0)  # Reduced from 5.0
+            exposure_hours_threshold = config.get('exposure_hours_threshold', 2.0)
             cooldown = config.get('cooldown_minutes', 60)
             priority = config.get('priority', 'High')
             
@@ -404,7 +445,28 @@ class AlertManager:
                                  f"{self.co2_exposure_tracking[zone_id]:.1f} hours today. "
                                  f"Gas Detection = {gas_detected}. "
                                  f"ESG compliance risk - improve ventilation.")
-                    self.generate_alert("Carbon_Penalty_Avoidance", description, priority, zone_id)
+                    self.generate_alert_sync("Carbon_Penalty_Avoidance", description, priority, zone_id)
+    
+    async def update_alert_asset_ids(self):
+        """Update asset IDs for all existing alerts"""
+        if not self.db_manager:
+            return
+        
+        updated_count = 0
+        for alert in self.alerts:
+            if alert.get('AlertType') and alert.get('assetId') == 'no-asset-id-assigned':
+                try:
+                    asset_id = await self.db_manager.get_alert_asset_id(alert['AlertType'])
+                    if asset_id != 'no-asset-id-assigned':
+                        alert['assetId'] = asset_id
+                        updated_count += 1
+                except Exception as e:
+                    logger.warning(f"Failed to update asset ID for alert {alert['AlertType']}: {e}")
+        
+        if updated_count > 0:
+            logger.info(f"Updated asset IDs for {updated_count} existing alerts")
+        
+        return updated_count
     
     def get_all_alerts(self) -> List[Dict]:
         """Get all alerts"""
@@ -456,16 +518,92 @@ class AlertManager:
                     'count': 0,
                     'last_triggered': None,
                     'priority': alert.get('Priority', 'Medium'),
-                    'enabled': self.alert_configs.get(alert_type, {}).get('enabled', True)
+                    'enabled': self.alert_configs.get(alert_type, {}).get('enabled', True),
+                    'asset_id': alert.get('assetId', 'no-asset-id-assigned')
                 }
             
             alert_summary[alert_type]['count'] += 1
             alert_date = alert.get('Date')
             if not alert_summary[alert_type]['last_triggered'] or alert_date > alert_summary[alert_type]['last_triggered']:
                 alert_summary[alert_type]['last_triggered'] = alert_date
+                alert_summary[alert_type]['asset_id'] = alert.get('assetId', 'no-asset-id-assigned')
         
         return {
             'total_alerts': total_alerts,
             'alert_types': alert_summary,
             'timestamp': datetime.now(timezone.utc).isoformat()
         }
+    
+    def get_alerts_by_asset_id(self, asset_id: str) -> List[Dict]:
+        """Get alerts filtered by asset ID"""
+        return [alert for alert in self.alerts if alert.get('assetId') == asset_id]
+    
+    def get_asset_id_stats(self) -> Dict:
+        """Get statistics about asset ID assignments"""
+        stats = defaultdict(int)
+        asset_id_alerts = defaultdict(list)
+        
+        for alert in self.alerts:
+            asset_id = alert.get('assetId', 'no-asset-id-assigned')
+            alert_type = alert.get('AlertType', 'Unknown')
+            
+            stats[asset_id] += 1
+            asset_id_alerts[asset_id].append(alert_type)
+        
+        return {
+            'total_alerts': len(self.alerts),
+            'assigned_alerts': sum(count for asset_id, count in stats.items() if asset_id != 'no-asset-id-assigned'),
+            'unassigned_alerts': stats.get('no-asset-id-assigned', 0),
+            'asset_id_breakdown': dict(stats),
+            'asset_id_alert_types': {asset_id: list(set(alert_types)) 
+                                   for asset_id, alert_types in asset_id_alerts.items()},
+            'assignment_rate': round((sum(count for asset_id, count in stats.items() 
+                                        if asset_id != 'no-asset-id-assigned') / max(1, len(self.alerts))) * 100, 2)
+        }
+    
+    def clear_old_alerts(self, days: int = 7):
+        """Clear alerts older than specified days"""
+        cutoff_time = datetime.now(timezone.utc) - timedelta(days=days)
+        original_count = len(self.alerts)
+        
+        self.alerts = deque([
+            alert for alert in self.alerts 
+            if datetime.fromisoformat(alert['Date'].replace('Z', '+00:00')) > cutoff_time
+        ], maxlen=1000)
+        
+        cleared_count = original_count - len(self.alerts)
+        if cleared_count > 0:
+            logger.info(f"Cleared {cleared_count} alerts older than {days} days")
+        
+        return cleared_count
+    
+    def export_alerts_for_asset(self, asset_id: str, format: str = 'json') -> Dict:
+        """Export alerts for a specific asset ID"""
+        asset_alerts = self.get_alerts_by_asset_id(asset_id)
+        
+        export_data = {
+            'asset_id': asset_id,
+            'total_alerts': len(asset_alerts),
+            'export_timestamp': datetime.now(timezone.utc).isoformat(),
+            'alerts': asset_alerts
+        }
+        
+        if format == 'summary':
+            # Create summary format
+            alert_types = defaultdict(int)
+            priorities = defaultdict(int)
+            
+            for alert in asset_alerts:
+                alert_types[alert.get('AlertType', 'Unknown')] += 1
+                priorities[alert.get('Priority', 'Unknown')] += 1
+            
+            export_data['summary'] = {
+                'alert_types': dict(alert_types),
+                'priorities': dict(priorities),
+                'date_range': {
+                    'earliest': min([alert['Date'] for alert in asset_alerts]) if asset_alerts else None,
+                    'latest': max([alert['Date'] for alert in asset_alerts]) if asset_alerts else None
+                }
+            }
+        
+        return export_data
