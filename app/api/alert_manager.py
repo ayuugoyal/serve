@@ -19,18 +19,14 @@ class AlertManager:
         self.co2_exposure_tracking = defaultdict(float)
         self.high_humidity_start_times = {}
         
-    async def generate_alert(self, alert_type: str, description: str, priority: str = "Medium", zone_id: str = "Zone-1") -> Dict:
-        """Generate a new alert with asset ID from database"""
-        from database.db_config import db_manager
-        
+    def generate_alert(self, alert_type: str, description: str, priority: str = "Medium", zone_id: str = "Zone-1") -> Dict:
+        """Generate a new alert - sync version"""
         alert_id = f"ALERT_{alert_type}_{int(time.time())}"
         
-        # Get asset ID from database
-        asset_id = await db_manager.get_alert_asset_id(alert_type)
-        
+        # Use default asset ID - will be updated by API layer
         alert = {
             "AlertType": alert_type,
-            "assetId": asset_id,
+            "assetId": "no-asset-id-assigned",  # Will be updated later
             "Description": description,
             "Date": datetime.now(timezone.utc).isoformat(),
             "Report": "Smart Building Alert",
@@ -48,7 +44,7 @@ class AlertManager:
         }
         
         self.alerts.append(alert)
-        logger.info(f"Generated alert: {alert_type} - {description} - Asset ID: {asset_id}")
+        logger.info(f"Generated alert: {alert_type} - {description}")
         return alert
 
     def should_generate_alert(self, alert_type: str, cooldown_minutes: int = 5) -> bool:

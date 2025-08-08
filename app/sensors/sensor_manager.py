@@ -150,18 +150,15 @@ class SensorManager:
                 self.diagnostics['sensor_stats'][sensor_type]['failed_reads'] += 1
                 self.diagnostics['sensor_stats'][sensor_type]['last_failure'] = time.time()
     
-    async def get_all_readings(self) -> List[Dict[str, Any]]:
-        """Get readings from all sensors with asset IDs from database"""
-        from database.db_config import db_manager
-        
+    def get_all_readings(self) -> List[Dict[str, Any]]:
+        """Get readings from all sensors - sync version"""
         readings = []
         for sensor_type, sensor in self.sensors.items():
             try:
                 reading = sensor.get_reading()
                 
-                # Get asset ID from database
-                asset_id = await db_manager.get_sensor_asset_id(sensor.sensor_id)
-                reading['assetId'] = asset_id
+                # Use default asset ID for now - will be updated by API layer
+                reading['assetId'] = reading.get('assetId', 'no-asset-id-assigned')
                 
                 # Add diagnostic info
                 reading['diagnostic_info'] = {
@@ -182,7 +179,7 @@ class SensorManager:
                 logger.error(f"Error getting reading from {sensor_type}: {e}")
                 readings.append({
                     'sensor_type': sensor_type,
-                    'sensor_id': sensor.sensor_id,
+                    'sensor_id': getattr(sensor, 'sensor_id', sensor_type),
                     'assetId': 'no-asset-id-assigned',
                     'status': 'error',
                     'error': str(e),

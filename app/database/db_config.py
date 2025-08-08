@@ -167,21 +167,35 @@ class DatabaseManager:
     
     async def get_sensor_asset_id(self, sensor_name: str) -> str:
         """Get asset ID for a sensor, return 'no-asset-id-assigned' if not found"""
-        async with self.connection_pool.acquire() as conn:
-            row = await conn.fetchrow(
-                'SELECT assetids FROM "sensorsToAssetIds" WHERE "sensorName" = $1',
-                sensor_name
-            )
-            return row['assetids'] if row and row['assetids'] else 'no-asset-id-assigned'
-    
+        try:
+            if not self.connection_pool:
+                return 'no-asset-id-assigned'
+                
+            async with asyncio.wait_for(self.connection_pool.acquire(), timeout=5.0) as conn:
+                row = await asyncio.wait_for(
+                    conn.fetchrow('SELECT assetids FROM "sensorsToAssetIds" WHERE "sensorName" = $1', sensor_name),
+                    timeout=5.0
+                )
+                return row['assetids'] if row and row['assetids'] else 'no-asset-id-assigned'
+        except Exception as e:
+            logger.warning(f"Database query failed for sensor {sensor_name}: {e}")
+            return 'no-asset-id-assigned'
+
     async def get_alert_asset_id(self, alert_type: str) -> str:
         """Get asset ID for an alert type, return 'no-asset-id-assigned' if not found"""
-        async with self.connection_pool.acquire() as conn:
-            row = await conn.fetchrow(
-                'SELECT assetids FROM "alertsToAssetIds" WHERE "alertType" = $1',
-                alert_type
-            )
-            return row['assetids'] if row and row['assetids'] else 'no-asset-id-assigned'
+        try:
+            if not self.connection_pool:
+                return 'no-asset-id-assigned'
+                
+            async with asyncio.wait_for(self.connection_pool.acquire(), timeout=5.0) as conn:
+                row = await asyncio.wait_for(
+                    conn.fetchrow('SELECT assetids FROM "alertsToAssetIds" WHERE "alertType" = $1', alert_type),
+                    timeout=5.0
+                )
+                return row['assetids'] if row and row['assetids'] else 'no-asset-id-assigned'
+        except Exception as e:
+            logger.warning(f"Database query failed for alert {alert_type}: {e}")
+            return 'no-asset-id-assigned'
 
 # Global database manager instance
 db_manager = DatabaseManager()

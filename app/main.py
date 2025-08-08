@@ -160,11 +160,46 @@ async def get_alerts_summary():
 
 @app.get("/api/dashboard")
 async def get_dashboard():
-    """Get dashboard data"""
+    """Get dashboard data with asset IDs from database"""
     try:
+        # Check database connection
+        db_available = await ensure_db_connection()
+        
+        # Get sensor readings (sync)
+        sensor_readings = sensor_manager.get_all_readings()
+        
+        # Update asset IDs from database if available
+        if db_available:
+            for reading in sensor_readings:
+                if 'sensor_id' in reading:
+                    try:
+                        asset_id = await db_manager.get_sensor_asset_id(reading['sensor_id'])
+                        reading['assetId'] = asset_id
+                    except Exception as e:
+                        logger.warning(f"Could not get asset ID for {reading['sensor_id']}: {e}")
+                        reading['assetId'] = 'no-asset-id-assigned'
+        else:
+            # Fallback to default asset IDs
+            for reading in sensor_readings:
+                reading['assetId'] = reading.get('assetId', 'no-asset-id-assigned')
+        
+        # Get recent alerts
+        recent_alerts = alert_manager.get_recent_alerts(limit=10)
+        
+        # Update alert asset IDs from database if available
+        if db_available:
+            for alert in recent_alerts:
+                if 'AlertType' in alert:
+                    try:
+                        asset_id = await db_manager.get_alert_asset_id(alert['AlertType'])
+                        alert['assetId'] = asset_id
+                    except Exception as e:
+                        logger.warning(f"Could not get asset ID for alert {alert['AlertType']}: {e}")
+                        alert['assetId'] = 'no-asset-id-assigned'
+        
         dashboard_data = {
-            "sensors": sensor_manager.get_all_readings(),
-            "alerts": alert_manager.get_recent_alerts(limit=10),
+            "sensors": sensor_readings,
+            "alerts": recent_alerts,
             "summary": alert_manager.get_alerts_summary(),
             "system_status": sensor_manager.get_system_status(),
             "timestamp": datetime.now(timezone.utc).isoformat()
@@ -172,10 +207,21 @@ async def get_dashboard():
         
         response = ApiResponse(data=[dashboard_data], shouldSubscribe="true")
         return response.dict()
+        
     except Exception as e:
         logger.error(f"Error getting dashboard: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     
+
+async def ensure_db_connection():
+    """Ensure database connection is available"""
+    try:
+        if not db_manager.connection_pool:
+            await db_manager.initialize()
+        return True
+    except Exception as e:
+        logger.error(f"Database connection failed: {e}")
+        return False
 
 @app.get("/api/asset-ids")
 async def get_asset_ids():
@@ -378,16 +424,20 @@ def background_sensor_loop():
 @app.on_event("startup")
 async def startup_event():
     """Initialize the application"""
-    # Initialize database
-    await db_manager.initialize()
+    try:
+        # Try to initialize database
+        await db_manager.initialize()
+        logger.info("Database connected successfully")
+    except Exception as e:
+        logger.error(f"Database initialization failed: {e}")
+        logger.warning("Continuing without database - asset IDs will use defaults")
     
     # Start background sensor reading
     sensor_thread = Thread(target=background_sensor_loop, daemon=True)
     sensor_thread.start()
     
-    logger.info("Sensor monitoring system started with database integration")
+    logger.info("Sensor monitoring system started")
     logger.info(f"Available sensors: {list(sensor_manager.sensors.keys())}")
-
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup on shutdown"""
